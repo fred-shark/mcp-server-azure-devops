@@ -49,7 +49,7 @@ export function normalizeAuthMethod(
 // Load environment variables
 dotenv.config();
 
-function getConfig(): AzureDevOpsConfig {
+export function getConfig(): AzureDevOpsConfig {
   // Debug log the environment variables to help diagnose issues
   process.stderr.write(`DEBUG - Environment variables in getConfig():
   AZURE_DEVOPS_ORG_URL: ${process.env.AZURE_DEVOPS_ORG_URL || 'NOT SET'}

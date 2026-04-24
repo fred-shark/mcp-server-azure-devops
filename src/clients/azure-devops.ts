@@ -34,10 +34,6 @@ interface WikiCreateParameters {
   };
 }
 
-interface WikiPageContent {
-  content: string;
-}
-
 export interface WikiPageSummary {
   id: number;
   path: string;
@@ -48,18 +44,13 @@ export interface WikiPageSummary {
 interface WikiPagesBatchRequest {
   top: number;
   continuationToken?: string;
+  path?: string;
+  recursionLevel?: number;
 }
 
 interface WikiPagesBatchResponse {
   value: WikiPageSummary[];
   continuationToken?: string;
-}
-
-interface PageUpdateOptions {
-  comment?: string;
-  versionDescriptor?: {
-    version?: string;
-  };
 }
 
 export class WikiClient {
@@ -247,16 +238,27 @@ export class WikiClient {
     // Ensure pagePath starts with a forward slash
     const normalizedPath = pagePath.startsWith('/') ? pagePath : `/${pagePath}`;
 
-    // Construct the URL to get the wiki page
-    const url = `${this.baseUrl}/${project}/_apis/wiki/wikis/${wikiId}/pages`;
+    // Encode the page path (keep forward slashes encoded as %2F for API)
+    const encodedPagePath = encodeURIComponent(normalizedPath);
+
+    // Use path as part of URL (based on working curl example)
+    const url = `${this.baseUrl}/${project}/_apis/wiki/wikis/${wikiId}/pages${encodedPagePath}`;
     const params: Record<string, string> = {
       'api-version': '7.1',
-      path: normalizedPath,
     };
 
     try {
       // Get authorization header
       const authHeader = await getAuthorizationHeader();
+
+      // Debug logging
+      console.error('Azure DevOps Wiki GET Page:', {
+        url,
+        params,
+        encodedPagePath,
+        normalizedPath,
+        originalPath: pagePath,
+      });
 
       // Make the API request for plain text content
       const response = await axios.get(url, {
@@ -287,6 +289,16 @@ export class WikiClient {
                 .message || axiosError.message
             : axiosError.message;
 
+        // Log detailed error for debugging
+        console.error('Azure DevOps Wiki API Error:', {
+          url,
+          params,
+          status,
+          errorMessage,
+          responseData: axiosError.response.data,
+          headers: axiosError.response.headers,
+        });
+
         // Handle 404 Not Found
         if (status === 404) {
           throw new AzureDevOpsResourceNotFoundError(
@@ -308,6 +320,11 @@ export class WikiClient {
       }
 
       // Handle network errors
+      console.error('Azure DevOps Network Error:', {
+        url,
+        params,
+        errorMessage: axiosError.message,
+      });
       throw new AzureDevOpsError(
         `Network error when getting wiki page: ${axiosError.message}`,
       );
@@ -431,150 +448,25 @@ export class WikiClient {
   }
 
   /**
-   * Updates a wiki page with the provided content
-   * @param content - Content for the wiki page
+   * Lists all pages in a wiki with pagination support
+   *
    * @param projectId - Project ID or name
    * @param wikiId - Wiki ID or name
-   * @param pagePath - Path of the wiki page
-   * @param options - Additional options like comment and version
-   * @returns The updated wiki page
-   */
-  async updatePage(
-    content: WikiPageContent,
-    projectId: string,
-    wikiId: string,
-    pagePath: string,
-    options?: PageUpdateOptions,
-  ) {
-    // Use the default project if not provided
-    const project = projectId || defaultProject;
-
-    // First get the current page version
-    let currentETag;
-    try {
-      const currentPage = await this.getPage(project, wikiId, pagePath);
-      currentETag = currentPage.eTag;
-    } catch (error) {
-      if (error instanceof AzureDevOpsResourceNotFoundError) {
-        // If page doesn't exist, we'll create it (no If-Match header needed)
-        currentETag = undefined;
-      } else {
-        throw error;
-      }
-    }
-
-    // Encode the page path, handling forward slashes properly
-    const encodedPagePath = encodeURIComponent(pagePath).replace(/%2F/g, '/');
-
-    // Construct the URL to update the wiki page
-    const url = `${this.baseUrl}/${project}/_apis/wiki/wikis/${wikiId}/pages`;
-    const params: Record<string, string> = {
-      'api-version': '7.1',
-      path: encodedPagePath,
-    };
-
-    // Add optional comment parameter if provided
-    if (options?.comment) {
-      params.comment = options.comment;
-    }
-
-    try {
-      // Get authorization header
-      const authHeader = await getAuthorizationHeader();
-
-      // Prepare request headers
-      const headers: Record<string, string> = {
-        Authorization: authHeader,
-        'Content-Type': 'application/json',
-      };
-
-      // Add If-Match header if we have an ETag (for updates)
-      if (currentETag) {
-        headers['If-Match'] = `"${currentETag}"`; // Wrap in quotes as required by API
-      }
-
-      // Create a properly typed payload
-      const payload: Record<string, string> = {
-        content: content.content,
-      };
-
-      // Make the API request
-      const response = await axios.put(url, payload, {
-        params,
-        headers,
-      });
-
-      // The ETag header contains the version
-      const eTag = response.headers.etag;
-
-      // Return the page content along with metadata
-      return {
-        ...response.data,
-        version: eTag ? eTag.replace(/"/g, '') : undefined, // Remove quotes from ETag
-        message:
-          response.status === 201
-            ? 'Page created successfully'
-            : 'Page updated successfully',
-      };
-    } catch (error) {
-      const axiosError = error as AxiosError;
-
-      // Handle specific error cases
-      if (axiosError.response) {
-        const status = axiosError.response.status;
-        const errorMessage =
-          typeof axiosError.response.data === 'object' &&
-          axiosError.response.data
-            ? (axiosError.response.data as AzureDevOpsApiErrorResponse)
-                .message || axiosError.message
-            : axiosError.message;
-
-        // Handle 404 Not Found
-        if (status === 404) {
-          throw new AzureDevOpsResourceNotFoundError(
-            `Wiki page not found: ${pagePath} in wiki ${wikiId}`,
-          );
-        }
-
-        // Handle 401 Unauthorized or 403 Forbidden
-        if (status === 401 || status === 403) {
-          throw new AzureDevOpsPermissionError(
-            `Permission denied to update wiki page: ${pagePath}`,
-          );
-        }
-
-        // Handle 412 Precondition Failed (version conflict)
-        if (status === 412) {
-          throw new AzureDevOpsValidationError(
-            `Version conflict: The wiki page has been modified since you retrieved it. Please get the latest version and try again.`,
-          );
-        }
-
-        // Handle other error statuses
-        throw new AzureDevOpsError(
-          `Failed to update wiki page: ${errorMessage}`,
-        );
-      }
-
-      // Handle network errors
-      throw new AzureDevOpsError(
-        `Network error when updating wiki page: ${axiosError.message}`,
-      );
-    }
-  }
-
-  /**
-   * Lists wiki pages from a wiki using the Pages Batch API
-   * @param projectId - Project ID or name
-   * @param wikiId - Wiki ID or name
+   * @param options - Optional parameters for listing pages
+   * @param options.path - The path to start listing from (default: root)
+   * @param options.recursionLevel - Recursion level for nested pages (default: full)
    * @returns Array of wiki page summaries sorted by order then path
    */
   async listWikiPages(
     projectId: string,
     wikiId: string,
+    options?: { path?: string; recursionLevel?: number },
   ): Promise<WikiPageSummary[]> {
     // Use the default project if not provided
     const project = projectId || defaultProject;
+
+    // Destructure options
+    const { path, recursionLevel } = options || {};
 
     // Construct the URL for the Pages Batch API
     const url = `${this.baseUrl}/${project}/_apis/wiki/wikis/${wikiId}/pagesbatch`;
@@ -591,6 +483,8 @@ export class WikiClient {
         const requestBody: WikiPagesBatchRequest = {
           top: 100,
           ...(continuationToken && { continuationToken }),
+          ...(path && { path }),
+          ...(recursionLevel && { recursionLevel }),
         };
 
         // Make the API request
@@ -613,8 +507,17 @@ export class WikiClient {
           allPages.push(...response.data.value);
         }
 
+        // Debug logging
+        console.error(
+          `DEBUG: Batch received ${response.data.value?.length || 0} pages, total so far: ${allPages.length}, response.data.continuationToken: ${response.data.continuationToken ? 'present' : 'absent'}, x-ms-continuationtoken header: ${response.headers['x-ms-continuationtoken'] || 'absent'}`,
+        );
+
         // Update continuation token for next iteration
-        continuationToken = response.data.continuationToken;
+        // Check both response body and headers for continuation token
+        continuationToken =
+          response.data.continuationToken ||
+          response.headers['x-ms-continuationtoken'] ||
+          response.headers['x-ms-continuationtoken'];
       } while (continuationToken);
 
       // Sort results by order then path
@@ -666,6 +569,32 @@ export class WikiClient {
         `Network error when listing wiki pages: ${axiosError.message}`,
       );
     }
+  }
+
+  /**
+   * Updates an existing wiki page with new content
+   * @param wikiPageContent - Object containing the page content
+   * @param projectId - Project ID or name
+   * @param wikiId - Wiki ID or name
+   * @param pagePath - Path of the wiki page to update
+   * @param options - Additional options like comment
+   * @returns The updated wiki page
+   */
+  async updatePage(
+    wikiPageContent: { content: string },
+    projectId: string,
+    wikiId: string,
+    pagePath: string,
+    options?: { comment?: string },
+  ) {
+    // Delegate to createPage which handles both creation and updates
+    return this.createPage(
+      wikiPageContent.content,
+      projectId,
+      wikiId,
+      pagePath,
+      options,
+    );
   }
 }
 

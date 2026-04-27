@@ -25,7 +25,7 @@ export interface WikiPageSummary {
 export async function listWikiPages(
   options: ListWikiPagesOptions,
 ): Promise<WikiPageSummary[]> {
-  const { organizationId, projectId, wikiId } = options;
+  const { organizationId, projectId, wikiId, path, recursionLevel } = options;
 
   // Use defaults if not provided
   const orgId = organizationId || defaultOrg;
@@ -39,7 +39,10 @@ export async function listWikiPages(
     });
 
     // Get the wiki pages
-    const pages = await client.listWikiPages(projId, wikiId);
+    const pages = await client.listWikiPages(projId, wikiId, {
+      ...(path && { path }),
+      ...(recursionLevel && { recursionLevel }),
+    });
 
     // Return the pages directly since the client interface now matches our requirements
     return pages.map((page) => ({

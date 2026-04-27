@@ -70,6 +70,58 @@ For iterative development (auto-reload):
 npm run dev            # runs src/index.ts via ts-node-dev
 ```
 
+### Command Line Interface (CLI)
+
+In addition to the MCP server, this package includes a command-line interface (`azdevops-cli`) that provides access to all MCP tools directly from your terminal. The CLI can be used via `npx` or installed globally:
+
+```bash
+# Install globally
+npm install -g @tiberriver256/mcp-server-azure-devops
+
+# Or use with npx (no installation required)
+npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli --help
+```
+
+Once installed globally, you can use `azdevops-cli` directly:
+
+```bash
+azdevops-cli --help
+azdevops-cli list-projects
+```
+
+Examples using `npx`:
+
+```bash
+# Show help and available commands
+npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli --help
+
+# List all available tools
+npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli
+
+# Get user profile information
+npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli get-me
+
+# List projects with pretty output format
+npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli list-projects --output pretty
+
+# Get repository tree
+npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli get-repository-tree --project-id <project-id> --repository-id <repository-id>
+
+# Search for work items
+npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli search-work-items --query "AssignedTo:me AND State:Active"
+
+# List pull requests with quiet output (JSON only)
+npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli list-pull-requests --project-id <project-id> --repository-id <repository-id> --quiet
+```
+
+The CLI uses the same authentication and configuration as the MCP server (via environment variables). Available output formats:
+
+- `json`: Compact JSON output (default)
+- `pretty`: Formatted JSON with indentation
+- Use `--quiet` flag to suppress additional output and get only data
+
+For a complete list of available commands, run `azdevops-cli --help`.
+
 ### Usage with Claude Desktop/Cursor AI
 
 To integrate with Claude Desktop or Cursor AI, add one of the following configurations to your configuration file.
@@ -154,17 +206,17 @@ For a complete list of environment variables and their descriptions, see the [Au
 
 Key environment variables include:
 
-| Variable                       | Description                                                                        | Required                     | Default          |
-| ------------------------------ | ---------------------------------------------------------------------------------- | ---------------------------- | ---------------- |
-| `AZURE_DEVOPS_AUTH_METHOD`     | Authentication method (`pat`, `azure-identity`, or `azure-cli`) - case-insensitive | No                           | `azure-identity` |
+| Variable                       | Description                                                                                                         | Required                     | Default          |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------- | ---------------------------- | ---------------- |
+| `AZURE_DEVOPS_AUTH_METHOD`     | Authentication method (`pat`, `azure-identity`, or `azure-cli`) - case-insensitive                                  | No                           | `azure-identity` |
 | `AZURE_DEVOPS_ORG_URL`         | Full URL to your Azure DevOps organization or Server collection (e.g., `https://server:8080/tfs/DefaultCollection`) | Yes                          | -                |
-| `AZURE_DEVOPS_PAT`             | Personal Access Token (for PAT auth)                                               | Only with PAT auth           | -                |
-| `AZURE_DEVOPS_DEFAULT_PROJECT` | Default project if none specified                                                  | No                           | -                |
-| `AZURE_DEVOPS_API_VERSION`     | API version to use                                                                 | No                           | Latest           |
-| `AZURE_TENANT_ID`              | Azure AD tenant ID (for service principals)                                        | Only with service principals | -                |
-| `AZURE_CLIENT_ID`              | Azure AD application ID (for service principals)                                   | Only with service principals | -                |
-| `AZURE_CLIENT_SECRET`          | Azure AD client secret (for service principals)                                    | Only with service principals | -                |
-| `LOG_LEVEL`                    | Logging level (debug, info, warn, error)                                           | No                           | info             |
+| `AZURE_DEVOPS_PAT`             | Personal Access Token (for PAT auth)                                                                                | Only with PAT auth           | -                |
+| `AZURE_DEVOPS_DEFAULT_PROJECT` | Default project if none specified                                                                                   | No                           | -                |
+| `AZURE_DEVOPS_API_VERSION`     | API version to use                                                                                                  | No                           | Latest           |
+| `AZURE_TENANT_ID`              | Azure AD tenant ID (for service principals)                                                                         | Only with service principals | -                |
+| `AZURE_CLIENT_ID`              | Azure AD application ID (for service principals)                                                                    | Only with service principals | -                |
+| `AZURE_CLIENT_SECRET`          | Azure AD client secret (for service principals)                                                                     | Only with service principals | -                |
+| `LOG_LEVEL`                    | Logging level (debug, info, warn, error)                                                                            | No                           | info             |
 
 ## Troubleshooting Authentication
 
@@ -206,6 +258,8 @@ The Azure DevOps MCP server provides a variety of tools for interacting with Azu
 - `get_repository_details`: Get detailed information about a repository including statistics and refs
 - `get_file_content`: Get content of a file or directory from a repository
 - `get_repository_tree`: List a repository's file tree from any path and depth
+- `get_all_repositories_tree`: Display hierarchical tree view of files across multiple repositories in a project
+- `list_commits`: List recent commits on a branch including file-level diff content
 - `create_branch`: Create a new branch from an existing one
 - `create_commit`: Commit multiple file changes to a branch using unified diffs or search/replace instructions
 

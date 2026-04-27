@@ -416,7 +416,7 @@ function getMimeType(path: string): string {
  * @param config The configuration to validate
  * @throws {AzureDevOpsValidationError} If the configuration is invalid
  */
-function validateConfig(config: AzureDevOpsConfig): void {
+export function validateConfig(config: AzureDevOpsConfig): void {
   if (!config.organizationUrl) {
     process.stderr.write(
       'ERROR: Organization URL is required but was not provided.\n',

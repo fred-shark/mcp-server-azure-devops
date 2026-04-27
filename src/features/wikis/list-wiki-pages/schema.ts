@@ -17,6 +17,19 @@ export const ListWikiPagesSchema = z.object({
     .nullable()
     .describe(`The ID or name of the project (Default: ${defaultProject})`),
   wikiId: z.string().describe('The ID or name of the wiki'),
+  path: z
+    .string()
+    .optional()
+    .nullable()
+    .describe('The path to start listing from (default: root)'),
+  recursionLevel: z
+    .number()
+    .int()
+    .min(1)
+    .max(50)
+    .optional()
+    .nullable()
+    .describe('Recursion level for nested pages (default: full)'),
 });
 
 export type ListWikiPagesOptions = z.infer<typeof ListWikiPagesSchema>;

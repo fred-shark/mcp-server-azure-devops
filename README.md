@@ -50,7 +50,7 @@ The server uses a feature-based architecture where each feature area (like work-
 If you just want to run the **published** server package, you **do not** need to clone or build this repository:
 
 ```bash
-npx -y @tiberriver256/mcp-server-azure-devops
+npx -y @fred-shark/mcp-server-azure-devops
 ```
 
 ### Running locally (from source)
@@ -83,7 +83,7 @@ Be sure you are logged in to Azure CLI with `az login` then add the following:
   "mcpServers": {
     "azureDevOps": {
       "command": "npx",
-      "args": ["-y", "@tiberriver256/mcp-server-azure-devops"],
+      "args": ["-y", "@fred-shark/mcp-server-azure-devops"],
       "env": {
         "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/your-organization",
         "AZURE_DEVOPS_AUTH_METHOD": "azure-identity",
@@ -101,7 +101,7 @@ Be sure you are logged in to Azure CLI with `az login` then add the following:
   "mcpServers": {
     "azureDevOps": {
       "command": "npx",
-      "args": ["-y", "@tiberriver256/mcp-server-azure-devops"],
+      "args": ["-y", "@fred-shark/mcp-server-azure-devops"],
       "env": {
         "AZURE_DEVOPS_ORG_URL": "https://dev.azure.com/your-organization",
         "AZURE_DEVOPS_AUTH_METHOD": "pat",
@@ -120,7 +120,7 @@ Azure DevOps Server (on-prem) requires PAT authentication. Example:
   "mcpServers": {
     "azureDevOps": {
       "command": "npx",
-      "args": ["-y", "@tiberriver256/mcp-server-azure-devops"],
+      "args": ["-y", "@fred-shark/mcp-server-azure-devops"],
       "env": {
         "AZURE_DEVOPS_ORG_URL": "https://server:8080/tfs/DefaultCollection",
         "AZURE_DEVOPS_AUTH_METHOD": "pat",

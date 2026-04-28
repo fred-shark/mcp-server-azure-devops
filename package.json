@@ -1,16 +1,16 @@
 {
   "name": "@fred-shark/mcp-server-azure-devops",
-  "version": "0.1.45",
+  "version": "0.1.46",
   "description": "Azure DevOps reference server for the Model Context Protocol (MCP)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fred-shark/mcp-server-azure-devops"
+    "url": "git+https://github.com/fred-shark/mcp-server-azure-devops.git"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "mcp-server-azure-devops": "./dist/index.js",
-    "azdevops-cli": "./dist/cli/index.js"
+    "mcp-server-azure-devops": "dist/index.js",
+    "azdevops-cli": "dist/cli/index.js"
   },
   "files": [
     "dist/",

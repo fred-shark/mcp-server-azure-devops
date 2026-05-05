@@ -509,15 +509,14 @@ export class WikiClient {
 
         // Debug logging
         console.error(
-          `DEBUG: Batch received ${response.data.value?.length || 0} pages, total so far: ${allPages.length}, response.data.continuationToken: ${response.data.continuationToken ? 'present' : 'absent'}, x-ms-continuationtoken header: ${response.headers['x-ms-continuationtoken'] || 'absent'}`,
+          `DEBUG: Batch received ${response.data.value?.length || 0} pages, total so far: ${allPages.length}, response.data.continuationToken: ${response.data.continuationToken ? 'present' : 'absent'}, x-ms-continuationtoken header: ${response.headers?.['x-ms-continuationtoken'] || 'absent'}`,
         );
 
         // Update continuation token for next iteration
         // Check both response body and headers for continuation token
         continuationToken =
           response.data.continuationToken ||
-          response.headers['x-ms-continuationtoken'] ||
-          response.headers['x-ms-continuationtoken'];
+          response.headers?.['x-ms-continuationtoken'];
       } while (continuationToken);
 
       // Sort results by order then path

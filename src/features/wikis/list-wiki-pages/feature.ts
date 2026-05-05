@@ -39,10 +39,14 @@ export async function listWikiPages(
     });
 
     // Get the wiki pages
-    const pages = await client.listWikiPages(projId, wikiId, {
+    const listOptions = {
       ...(path && { path }),
       ...(recursionLevel && { recursionLevel }),
-    });
+    };
+    const pages =
+      Object.keys(listOptions).length > 0
+        ? await client.listWikiPages(projId, wikiId, listOptions)
+        : await client.listWikiPages(projId, wikiId);
 
     // Return the pages directly since the client interface now matches our requirements
     return pages.map((page) => ({

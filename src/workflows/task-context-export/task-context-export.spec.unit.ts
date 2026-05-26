@@ -13,8 +13,10 @@ import { writeCompactAnalysisPack } from './compactAnalysis';
 import {
   activityOf,
   classifyWorkItemRelations,
+  collectWikiPages,
   defaultOutputDir,
 } from './collectTaskContext';
+import { getWikiPage, listWikiPages } from '../../features/wikis';
 import { resetOutputDirectory, writeCommits } from './fileWriters';
 import { buildCompactInventory, writeCompactInventory } from './inventory';
 import { extractLinksFromText } from './linkExtractors';
@@ -24,9 +26,30 @@ import {
   safeBoundedFileName,
   safeFileName,
 } from './markdownRenderers';
-import { CommitArtifact, PullRequestArtifact, WikiArtifact } from './types';
+import {
+  CollectionIssue,
+  CommitArtifact,
+  ExtractedLink,
+  PullRequestArtifact,
+  TaskContextCollectOptions,
+  WikiArtifact,
+  WorkItemWithActivity,
+} from './types';
+
+jest.mock('../../features/wikis');
 
 describe('task context export workflow units', () => {
+  const mockedGetWikiPage = getWikiPage as jest.MockedFunction<
+    typeof getWikiPage
+  >;
+  const mockedListWikiPages = listWikiPages as jest.MockedFunction<
+    typeof listWikiPages
+  >;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
   test('extracts Azure DevOps pull request, commit, wiki, and external links', () => {
     const links = extractLinksFromText(
       [
@@ -118,6 +141,56 @@ describe('task context export workflow units', () => {
 
     expect(fileName.length).toBeLessThanOrEqual(96);
     expect(fileName).toMatch(/[a-f0-9]{10}$/);
+  });
+
+  test('caches wiki page lists while resolving multiple wiki page-id links', async () => {
+    mockedListWikiPages.mockResolvedValue([
+      { id: 11, path: '/Docs/One' },
+      { id: 22, path: '/Docs/Two' },
+    ]);
+    mockedGetWikiPage.mockImplementation(async ({ pagePath }) => {
+      return `content:${pagePath}`;
+    });
+
+    const warnings: CollectionIssue[] = [];
+    const artifacts = await collectWikiPages(
+      taskContextOptions(),
+      scopedWorkItems(),
+      [
+        wikiPageIdLink(11, 'https://dev.azure.com/org/project/wiki/one'),
+        wikiPageIdLink(22, 'https://dev.azure.com/org/project/wiki/two'),
+      ],
+      warnings,
+    );
+
+    expect(mockedListWikiPages).toHaveBeenCalledTimes(1);
+    expect(mockedListWikiPages).toHaveBeenCalledWith({
+      organizationId: undefined,
+      projectId: 'Project',
+      wikiId: 'wiki',
+    });
+    expect(artifacts.map((artifact) => artifact.path)).toEqual([
+      '/Docs/One',
+      '/Docs/Two',
+    ]);
+    expect(mockedGetWikiPage).toHaveBeenCalledTimes(2);
+    expect(warnings).toEqual([]);
+  });
+
+  test('does not share wiki page list cache between collections', async () => {
+    mockedListWikiPages.mockResolvedValue([{ id: 11, path: '/Docs/One' }]);
+    mockedGetWikiPage.mockResolvedValue('content');
+
+    const options = taskContextOptions();
+    const scoped = scopedWorkItems();
+    const links = [
+      wikiPageIdLink(11, 'https://dev.azure.com/org/project/wiki'),
+    ];
+
+    await collectWikiPages(options, scoped, links, []);
+    await collectWikiPages(options, scoped, links, []);
+
+    expect(mockedListWikiPages).toHaveBeenCalledTimes(2);
   });
 
   test('renders work item markdown with core fields', () => {
@@ -583,6 +656,44 @@ function buildSampleManifest(outputDir: string) {
     warnings: [],
     errors: [],
   });
+}
+
+function taskContextOptions(): TaskContextCollectOptions {
+  return {
+    connection: {
+      serverUrl: 'https://dev.azure.com/org',
+    } as TaskContextCollectOptions['connection'],
+    project: 'Project',
+    workItemId: 123,
+    outputDir: '.ai-context/tasks/123',
+    includeWiki: true,
+    includePrs: false,
+    includeCommits: false,
+    includeComments: false,
+    includeChecks: false,
+    includeRaw: false,
+  };
+}
+
+function scopedWorkItems(): WorkItemWithActivity[] {
+  return [
+    {
+      workItem: createWorkItem(123),
+      activity: 'Unknown',
+      fullCollection: true,
+    },
+  ];
+}
+
+function wikiPageIdLink(pageId: number, url: string): ExtractedLink {
+  return {
+    kind: 'wiki',
+    url,
+    source: 'test',
+    sourceWorkItemId: 123,
+    wikiId: 'wiki',
+    wikiPageId: pageId,
+  };
 }
 
 function createWorkItem(

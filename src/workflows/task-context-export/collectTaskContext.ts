@@ -9,6 +9,7 @@ import {
   getPullRequestComments,
 } from '../../features/pull-requests';
 import { getWikiPage, listWikiPages } from '../../features/wikis';
+import type { WikiPageSummary } from '../../features/wikis/list-wiki-pages/feature';
 import {
   buildManifest,
   createWorkItemSummary,
@@ -53,6 +54,7 @@ import {
 const CHILD_RELATION = 'System.LinkTypes.Hierarchy-Forward';
 const PARENT_RELATION = 'System.LinkTypes.Hierarchy-Reverse';
 const WORK_ITEM_URL_ID_PATTERN = /\/workItems\/(\d+)(?:$|[/?#])/i;
+type WikiPageListCache = Map<string, Promise<WikiPageSummary[]>>;
 
 export async function collectTaskContext(
   options: TaskContextCollectOptions,
@@ -604,13 +606,14 @@ async function addCommitArtifact(
   }
 }
 
-async function collectWikiPages(
+export async function collectWikiPages(
   options: TaskContextCollectOptions,
   scopedWorkItems: WorkItemWithActivity[],
   links: ExtractedLink[],
   warnings: CollectionIssue[],
 ): Promise<WikiArtifact[]> {
   const byKey = new Map<string, WikiArtifact>();
+  const pageListCache: WikiPageListCache = new Map();
 
   for (const link of links.filter((item) => item.kind === 'wiki')) {
     const source = sourceFromLink(link, scopedWorkItems) ?? {
@@ -626,7 +629,12 @@ async function collectWikiPages(
       });
       continue;
     }
-    const pagePath = await resolveWikiPagePath(options, link, warnings);
+    const pagePath = await resolveWikiPagePath(
+      options,
+      link,
+      warnings,
+      pageListCache,
+    );
     if (!pagePath) {
       continue;
     }
@@ -692,6 +700,7 @@ async function resolveWikiPagePath(
   options: TaskContextCollectOptions,
   link: ExtractedLink,
   warnings: CollectionIssue[],
+  pageListCache: WikiPageListCache,
 ): Promise<string | undefined> {
   if (link.wikiPageId === undefined) {
     return link.wikiPath ?? '/';
@@ -705,11 +714,12 @@ async function resolveWikiPagePath(
   const projectId = link.wikiProjectId ?? options.project;
 
   try {
-    const pages = await listWikiPages({
+    const pages = await getCachedWikiPages(
+      pageListCache,
       organizationId,
       projectId,
-      wikiId: link.wikiId,
-    });
+      link.wikiId,
+    );
     const page = pages.find((candidate) => candidate.id === link.wikiPageId);
     if (!page?.path) {
       warnings.push({
@@ -729,6 +739,25 @@ async function resolveWikiPagePath(
     );
     return undefined;
   }
+}
+
+function getCachedWikiPages(
+  cache: WikiPageListCache,
+  organizationId: string | undefined,
+  projectId: string,
+  wikiId: string,
+): Promise<WikiPageSummary[]> {
+  const cacheKey = JSON.stringify([organizationId ?? '', projectId, wikiId]);
+  let pages = cache.get(cacheKey);
+  if (!pages) {
+    pages = listWikiPages({
+      organizationId,
+      projectId,
+      wikiId,
+    });
+    cache.set(cacheKey, pages);
+  }
+  return pages;
 }
 
 function sourceFromLink(

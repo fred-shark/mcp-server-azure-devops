@@ -76,10 +76,10 @@ In addition to the MCP server, this package includes a command-line interface (`
 
 ```bash
 # Install globally
-npm install -g @tiberriver256/mcp-server-azure-devops
+npm install -g @fred-shark/mcp-server-azure-devops
 
 # Or use with npx (no installation required)
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli --help
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli --help
 ```
 
 Once installed globally, you can use `azdevops-cli` directly:
@@ -93,25 +93,25 @@ Examples using `npx`:
 
 ```bash
 # Show help and available commands
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli --help
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli --help
 
 # List all available tools
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli
 
 # Get user profile information
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli get-me
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli get-me
 
 # List projects with pretty output format
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli list-projects --output pretty
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli list-projects --output pretty
 
 # Get repository tree
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli get-repository-tree --project-id <project-id> --repository-id <repository-id>
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli get-repository-tree --project-id <project-id> --repository-id <repository-id>
 
 # Search for work items
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli search-work-items --query "AssignedTo:me AND State:Active"
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli search-work-items --query "AssignedTo:me AND State:Active"
 
 # List pull requests with quiet output (JSON only)
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli list-pull-requests --project-id <project-id> --repository-id <repository-id> --quiet
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli list-pull-requests --project-id <project-id> --repository-id <repository-id> --quiet
 
 # Collect an evidence pack for a completed work item
 azdevops-cli task-context-collect --work-item-id 12345

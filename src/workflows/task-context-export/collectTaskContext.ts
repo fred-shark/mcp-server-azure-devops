@@ -1,5 +1,6 @@
 import path from 'path';
 import { WebApi } from 'azure-devops-node-api';
+import { PullRequestStatus } from 'azure-devops-node-api/interfaces/GitInterfaces';
 import { WorkItem } from '../../features/work-items';
 import { getWorkItem } from '../../features/work-items/get-work-item/feature';
 import {
@@ -64,13 +65,19 @@ export async function collectTaskContext(
   const generatedAt = new Date().toISOString();
   const outputDir = path.resolve(options.outputDir);
 
-  await resetOutputDirectory(outputDir);
-
   const rootWorkItem = await getWorkItem(
     options.connection,
     options.workItemId,
     'all',
   );
+  if (isRemovedWorkItem(rootWorkItem)) {
+    throw new Error(
+      `Work item ${options.workItemId} is Removed and cannot be collected`,
+    );
+  }
+
+  await resetOutputDirectory(outputDir);
+
   const rootActivity = activityOf(rootWorkItem);
   const rootFiles = await writeWorkItem(
     outputDir,
@@ -107,6 +114,11 @@ export async function collectTaskContext(
   }
 
   for (const child of childItems) {
+    if (isRemovedWorkItem(child)) {
+      warnings.push(skippedRemovedWorkItemIssue(child));
+      continue;
+    }
+
     const activity = activityOf(child);
     const fullCollection =
       !options.activityFilter || activity === options.activityFilter;
@@ -344,6 +356,11 @@ async function collectContextReferences(
   for (const request of dedupeReferenceRequests(requests)) {
     try {
       const workItem = await getWorkItem(connection, request.id, 'all');
+      if (isRemovedWorkItem(workItem)) {
+        warnings.push(skippedRemovedWorkItemIssue(workItem, request.id));
+        continue;
+      }
+
       const type = fieldString(
         workItem.fields ?? {},
         'System.WorkItemType',
@@ -427,6 +444,7 @@ async function collectPullRequests(
 ): Promise<PullRequestArtifact[]> {
   const gitApi = await options.connection.getGitApi();
   const byKey = new Map<string, PullRequestArtifact>();
+  const skippedKeys = new Set<string>();
   const candidates = links.filter(
     (link) => link.kind === 'pull-request' && link.pullRequestId !== undefined,
   );
@@ -437,6 +455,9 @@ async function collectPullRequests(
       continue;
     }
     const key = `${link.repositoryId ?? link.repositoryName ?? 'unknown'}:${link.pullRequestId}`;
+    if (skippedKeys.has(key)) {
+      continue;
+    }
     const existing = byKey.get(key);
     if (existing) {
       addSource(existing.sources, source);
@@ -457,6 +478,12 @@ async function collectPullRequests(
       const repositoryId =
         stringFrom(repository.id) ?? link.repositoryId ?? link.repositoryName;
       const repositoryName = stringFrom(repository.name) ?? link.repositoryName;
+      if (!shouldCollectPullRequest(raw)) {
+        skippedKeys.add(key);
+        warnings.push(skippedPullRequestIssue(link.pullRequestId ?? 0, raw));
+        continue;
+      }
+
       const artifact: PullRequestArtifact = {
         key,
         id: link.pullRequestId ?? 0,
@@ -893,4 +920,57 @@ export function workItemFileNameForTest(workItem: WorkItem): string {
     'WorkItem',
   );
   return `${workItem.id}.${compactWorkItemType(type)}.md`;
+}
+
+export function isRemovedWorkItem(workItem: WorkItem): boolean {
+  return normalizedString(workItem.fields?.['System.State']) === 'removed';
+}
+
+export function shouldCollectPullRequest(raw: unknown): boolean {
+  const record = asRecord(raw);
+  return isCompletedPullRequestStatus(record.status) && record.isDraft !== true;
+}
+
+function skippedRemovedWorkItemIssue(
+  workItem: WorkItem,
+  fallbackId?: number,
+): CollectionIssue {
+  const id =
+    workItem.id ?? fallbackId ?? Number(workItem.fields?.['System.Id']);
+  return {
+    message: `Skipped removed work item ${Number.isFinite(id) ? id : 'unknown'}`,
+    source: 'work-item',
+  };
+}
+
+function skippedPullRequestIssue(
+  pullRequestId: number,
+  raw: unknown,
+): CollectionIssue {
+  const record = asRecord(raw);
+  const status = pullRequestStatusText(record.status);
+  const draftSuffix = record.isDraft === true ? ', draft: true' : '';
+  return {
+    message: `Skipped pull request ${pullRequestId} because it is not completed (status: ${status}${draftSuffix})`,
+    source: 'pull-request',
+  };
+}
+
+function normalizedString(value: unknown): string | undefined {
+  const text = stringFrom(value);
+  return text?.trim().toLowerCase();
+}
+
+function isCompletedPullRequestStatus(value: unknown): boolean {
+  if (typeof value === 'number') {
+    return value === PullRequestStatus.Completed;
+  }
+  return normalizedString(value) === 'completed';
+}
+
+function pullRequestStatusText(value: unknown): string {
+  if (typeof value === 'number') {
+    return PullRequestStatus[value]?.toLowerCase() ?? String(value);
+  }
+  return stringFrom(value) ?? 'unknown';
 }

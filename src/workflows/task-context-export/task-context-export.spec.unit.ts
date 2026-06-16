@@ -1,4 +1,5 @@
 import { WorkItem } from '../../features/work-items';
+import { PullRequestStatus } from 'azure-devops-node-api/interfaces/GitInterfaces';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
@@ -13,9 +14,19 @@ import { writeCompactAnalysisPack } from './compactAnalysis';
 import {
   activityOf,
   classifyWorkItemRelations,
+  collectTaskContext,
   collectWikiPages,
   defaultOutputDir,
+  isRemovedWorkItem,
+  shouldCollectPullRequest,
 } from './collectTaskContext';
+import { getWorkItem } from '../../features/work-items/get-work-item/feature';
+import {
+  getPullRequest,
+  getPullRequestChanges,
+  getPullRequestChecks,
+  getPullRequestComments,
+} from '../../features/pull-requests';
 import { getWikiPage, listWikiPages } from '../../features/wikis';
 import { resetOutputDirectory, writeCommits } from './fileWriters';
 import { buildCompactInventory, writeCompactInventory } from './inventory';
@@ -37,8 +48,24 @@ import {
 } from './types';
 
 jest.mock('../../features/wikis');
+jest.mock('../../features/work-items/get-work-item/feature');
+jest.mock('../../features/pull-requests');
 
 describe('task context export workflow units', () => {
+  const mockedGetWorkItem = getWorkItem as jest.MockedFunction<
+    typeof getWorkItem
+  >;
+  const mockedGetPullRequest = getPullRequest as jest.MockedFunction<
+    typeof getPullRequest
+  >;
+  const mockedGetPullRequestChanges =
+    getPullRequestChanges as jest.MockedFunction<typeof getPullRequestChanges>;
+  const mockedGetPullRequestChecks =
+    getPullRequestChecks as jest.MockedFunction<typeof getPullRequestChecks>;
+  const mockedGetPullRequestComments =
+    getPullRequestComments as jest.MockedFunction<
+      typeof getPullRequestComments
+    >;
   const mockedGetWikiPage = getWikiPage as jest.MockedFunction<
     typeof getWikiPage
   >;
@@ -125,6 +152,177 @@ describe('task context export workflow units', () => {
       ),
     ).toBe('Development');
     expect(activityOf(createWorkItem(102))).toBe('Unknown');
+  });
+
+  test('detects removed work items case-insensitively', () => {
+    expect(
+      isRemovedWorkItem(
+        createWorkItem(101, {
+          fields: { 'System.State': ' REMOVED ' },
+        }),
+      ),
+    ).toBe(true);
+    expect(isRemovedWorkItem(createWorkItem(102))).toBe(false);
+  });
+
+  test('collects only completed non-draft pull requests', () => {
+    expect(
+      shouldCollectPullRequest({ status: 'completed', isDraft: false }),
+    ).toBe(true);
+    expect(
+      shouldCollectPullRequest({ status: PullRequestStatus.Completed }),
+    ).toBe(true);
+    expect(shouldCollectPullRequest({ status: 'Completed' })).toBe(true);
+    expect(shouldCollectPullRequest({ status: 'active' })).toBe(false);
+    expect(shouldCollectPullRequest({ status: PullRequestStatus.Active })).toBe(
+      false,
+    );
+    expect(shouldCollectPullRequest({ status: 'abandoned' })).toBe(false);
+    expect(
+      shouldCollectPullRequest({ status: 'completed', isDraft: true }),
+    ).toBe(false);
+  });
+
+  test('fails removed root work item before cleaning existing output', async () => {
+    const outputDir = await mkdtemp(path.join(os.tmpdir(), 'task-context-'));
+    try {
+      await writeFile(path.join(outputDir, 'manifest.json'), 'existing');
+      mockedGetWorkItem.mockResolvedValue(
+        createWorkItem(123, {
+          fields: { 'System.State': 'Removed' },
+        }),
+      );
+
+      await expect(
+        collectTaskContext({
+          ...taskContextOptions(),
+          outputDir,
+        }),
+      ).rejects.toThrow('Work item 123 is Removed and cannot be collected');
+      await expect(
+        readFile(path.join(outputDir, 'manifest.json'), 'utf8'),
+      ).resolves.toBe('existing');
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  test('skips removed child work items and context references', async () => {
+    const outputDir = await mkdtemp(path.join(os.tmpdir(), 'task-context-'));
+    try {
+      const root = createWorkItem(123, {
+        relations: [
+          relation('System.LinkTypes.Hierarchy-Forward', 124),
+          relation('System.LinkTypes.Related', 500),
+        ],
+      });
+      const removedChild = createWorkItem(124, {
+        fields: {
+          'System.State': 'Removed',
+          'System.Description':
+            'https://dev.azure.com/org/project/_git/Repo/pullrequest/10',
+        },
+      });
+      const removedReference = createWorkItem(500, {
+        fields: { 'System.State': 'Removed' },
+      });
+      mockedGetWorkItem.mockImplementation(async (_connection, id) => {
+        if (id === 123) {
+          return root;
+        }
+        if (id === 124) {
+          return removedChild;
+        }
+        if (id === 500) {
+          return removedReference;
+        }
+        throw new Error(`Unexpected work item ${id}`);
+      });
+
+      const manifest = await collectTaskContext({
+        ...taskContextOptions(),
+        connection: taskContextConnection(),
+        outputDir,
+        includePrs: true,
+      });
+
+      expect(manifest.workItems.activities).toEqual({});
+      expect(manifest.workItems.contextReferences).toEqual([]);
+      expect(manifest.pullRequests).toEqual([]);
+      expect(mockedGetPullRequest).not.toHaveBeenCalled();
+      expect(manifest.warnings.map((warning) => warning.message)).toEqual([
+        'Skipped removed work item 124',
+        'Skipped removed work item 500',
+      ]);
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  test('skips active abandoned and draft pull requests before details collection', async () => {
+    const outputDir = await mkdtemp(path.join(os.tmpdir(), 'task-context-'));
+    try {
+      const root = createWorkItem(123, {
+        fields: {
+          'System.Description': [
+            'https://dev.azure.com/org/project/_git/Repo/pullrequest/10',
+            'https://dev.azure.com/org/project/_git/Repo/pullrequest/11',
+            'https://dev.azure.com/org/project/_git/Repo/pullrequest/12',
+            'https://dev.azure.com/org/project/_git/Repo/pullrequest/13',
+          ].join(' '),
+        },
+      });
+      mockedGetWorkItem.mockResolvedValue(root);
+      mockedGetPullRequest.mockImplementation(async (_connection, options) => {
+        const pullRequest = {
+          pullRequestId: options.pullRequestId,
+          repository: { id: 'repo', name: 'Repo' },
+          title: `PR ${options.pullRequestId}`,
+          status:
+            options.pullRequestId === 10
+              ? 'completed'
+              : options.pullRequestId === 11
+                ? 'active'
+                : options.pullRequestId === 12
+                  ? 'abandoned'
+                  : 'completed',
+          isDraft: options.pullRequestId === 13,
+        };
+        return pullRequest as unknown as Awaited<
+          ReturnType<typeof getPullRequest>
+        >;
+      });
+      mockedGetPullRequestChanges.mockResolvedValue({
+        files: [],
+      } as unknown as Awaited<ReturnType<typeof getPullRequestChanges>>);
+      mockedGetPullRequestComments.mockResolvedValue([]);
+      mockedGetPullRequestChecks.mockResolvedValue(
+        {} as unknown as Awaited<ReturnType<typeof getPullRequestChecks>>,
+      );
+
+      const manifest = await collectTaskContext({
+        ...taskContextOptions(),
+        connection: taskContextConnection(),
+        outputDir,
+        includePrs: true,
+        includeComments: true,
+        includeChecks: true,
+      });
+
+      expect(
+        manifest.pullRequests.map((pullRequest) => pullRequest.id),
+      ).toEqual([10]);
+      expect(mockedGetPullRequestChanges).toHaveBeenCalledTimes(1);
+      expect(mockedGetPullRequestComments).toHaveBeenCalledTimes(1);
+      expect(mockedGetPullRequestChecks).toHaveBeenCalledTimes(1);
+      expect(manifest.warnings.map((warning) => warning.message)).toEqual([
+        'Skipped pull request 11 because it is not completed (status: active)',
+        'Skipped pull request 12 because it is not completed (status: abandoned)',
+        'Skipped pull request 13 because it is not completed (status: completed, draft: true)',
+      ]);
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
   });
 
   test('creates safe file names and default output directory', () => {
@@ -660,9 +858,7 @@ function buildSampleManifest(outputDir: string) {
 
 function taskContextOptions(): TaskContextCollectOptions {
   return {
-    connection: {
-      serverUrl: 'https://dev.azure.com/org',
-    } as TaskContextCollectOptions['connection'],
+    connection: taskContextConnection(),
     project: 'Project',
     workItemId: 123,
     outputDir: '.ai-context/tasks/123',
@@ -673,6 +869,16 @@ function taskContextOptions(): TaskContextCollectOptions {
     includeChecks: false,
     includeRaw: false,
   };
+}
+
+function taskContextConnection(): TaskContextCollectOptions['connection'] {
+  return {
+    serverUrl: 'https://dev.azure.com/org',
+    getGitApi: jest.fn().mockResolvedValue({}),
+    getWorkItemTrackingApi: jest.fn().mockResolvedValue({
+      getComments: jest.fn().mockResolvedValue([]),
+    }),
+  } as unknown as TaskContextCollectOptions['connection'];
 }
 
 function scopedWorkItems(): WorkItemWithActivity[] {

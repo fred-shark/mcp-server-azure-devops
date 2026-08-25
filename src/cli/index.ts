@@ -8,6 +8,7 @@ import { loadAllTools } from '../shared/cli-utils/tool-loader';
 import { createCommand, executeTool } from './commander';
 import { getAzureDevOpsConnection } from './command-runner';
 import { printOutput, printError, OutputFormat } from './output-formatter';
+import { createTaskContextCollectCommand } from './commands/task-context-collect';
 import packageJson from '../../package.json';
 
 async function main() {
@@ -53,6 +54,10 @@ async function main() {
     // Add command to program
     program.addCommand(command);
   }
+
+  program.addCommand(
+    createTaskContextCollectCommand(() => getAzureDevOpsConnection()),
+  );
 
   // Add a default help command
   program.addHelpCommand('help [command]', 'Show help for a command');

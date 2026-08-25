@@ -76,10 +76,10 @@ In addition to the MCP server, this package includes a command-line interface (`
 
 ```bash
 # Install globally
-npm install -g @tiberriver256/mcp-server-azure-devops
+npm install -g @fred-shark/mcp-server-azure-devops
 
 # Or use with npx (no installation required)
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli --help
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli --help
 ```
 
 Once installed globally, you can use `azdevops-cli` directly:
@@ -93,25 +93,28 @@ Examples using `npx`:
 
 ```bash
 # Show help and available commands
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli --help
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli --help
 
 # List all available tools
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli
 
 # Get user profile information
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli get-me
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli get-me
 
 # List projects with pretty output format
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli list-projects --output pretty
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli list-projects --output pretty
 
 # Get repository tree
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli get-repository-tree --project-id <project-id> --repository-id <repository-id>
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli get-repository-tree --project-id <project-id> --repository-id <repository-id>
 
 # Search for work items
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli search-work-items --query "AssignedTo:me AND State:Active"
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli search-work-items --query "AssignedTo:me AND State:Active"
 
 # List pull requests with quiet output (JSON only)
-npx -y @tiberriver256/mcp-server-azure-devops azdevops-cli list-pull-requests --project-id <project-id> --repository-id <repository-id> --quiet
+npx -y @fred-shark/mcp-server-azure-devops azdevops-cli list-pull-requests --project-id <project-id> --repository-id <repository-id> --quiet
+
+# Collect an evidence pack for a completed work item
+azdevops-cli task-context-collect --work-item-id 12345
 ```
 
 The CLI uses the same authentication and configuration as the MCP server (via environment variables). Available output formats:
@@ -121,6 +124,52 @@ The CLI uses the same authentication and configuration as the MCP server (via en
 - Use `--quiet` flag to suppress additional output and get only data
 
 For a complete list of available commands, run `azdevops-cli --help`.
+
+#### Task Context Evidence Pack
+
+`task-context-collect` is a CLI-only workflow command. It does not call AI APIs and does not generate a final `summary.md`; it only collects facts and source material for a later analysis step.
+
+Minimal run:
+
+```bash
+azdevops-cli task-context-collect --work-item-id 12345
+```
+
+Full run:
+
+```bash
+azdevops-cli task-context-collect \
+  --project "MyProject" \
+  --work-item-id 12345 \
+  --out ".ai-context/tasks/12345" \
+  --include-wiki \
+  --include-prs \
+  --include-commits \
+  --include-comments \
+  --include-checks \
+  --include-raw
+```
+
+When `--project` is omitted, the command uses the configured default project. When `--out` is omitted, it writes to `.ai-context/tasks/<workItemId>`.
+
+The evidence pack contains `manifest.json`, `README.md`, normalized work item markdown, raw JSON, extracted links, related PRs, commits, explicitly linked wiki pages, and `prompts/summarize-task.prompt.md`. Root and direct child work items are scope items. Other linked work items are saved only as context references and are not used for recursive PR/commit/check collection. Wiki pages are downloaded only from explicit links found in scope work items and collected PR/comment text; the collector does not run text search across wiki content.
+
+The collector also prepares compact deterministic files for LLM analysis:
+
+- `output/analysis/00-inventory.md` and `.json`
+- `output/analysis/01-work-items-compact.md` and `.json`
+- `output/analysis/02-wiki-index.md` and `.json`
+- `output/analysis/03-pr-index.md` and `.json`
+- `output/analysis/04-commits-compact.md` and `.json`
+- `output/analysis/05-analysis-input.md`
+
+For Qwen or another model with limited context, pass `output/analysis/05-analysis-input.md` first. It points to compact follow-up files and explicitly tells the model not to read large raw evidence files into context. Avoid loading `manifest.json`, `links/extracted-links.md`, raw JSON, full PR `changes.md` / `comments.md`, large wiki pages, or `commits/commits.md` directly.
+
+Repeated runs overwrite deterministic generated files in `output/analysis/`, but preserve `output/summary.md`, `output/summary-review.md`, and user notes under `output/`.
+
+Direct child work items are grouped by their dynamic `Activity` field. Missing activity is written as `Unknown`. `--activity-filter` limits full child artifact collection to matching Activity values while still preserving excluded children as context references.
+
+For Azure DevOps Server on-premises, the command uses the existing PAT/config/auth mechanism and records warnings when Services-only or unavailable APIs cannot be read.
 
 ### Usage with Claude Desktop/Cursor AI
 

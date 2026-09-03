@@ -44,6 +44,8 @@ azdevops-cli task-context-collect \
 
 Default output is `.ai-context/tasks/<workItemId>`. The command writes `manifest.json`, `README.md`, `work-items/`, `links/`, `pull-requests/`, `commits/`, `wiki/`, and `prompts/summarize-task.prompt.md`. Wiki pages are downloaded only from explicit links found in scope work items and collected PR/comment text; the command does not run text search across wiki content.
 
+Without artifact include flags, work item comments are collected by default together with wiki pages, pull requests, and commits. In a selective run, use `--include-comments`. Normalized comments are written to `work-items/comments/<id>.comments.md` for the root work item and direct children included in full collection; raw aggregated responses are written under `work-items/comments/raw/` when raw output is enabled.
+
 The command also creates a deterministic compact analysis pack under `output/analysis/`:
 
 - `00-inventory.md` / `00-inventory.json`
@@ -53,11 +55,11 @@ The command also creates a deterministic compact analysis pack under `output/ana
 - `04-commits-compact.md` / `04-commits-compact.json`
 - `05-analysis-input.md`
 
-For Qwen or another LLM with limited context, start with `output/analysis/05-analysis-input.md` and then read the other compact files only when needed. Do not load `manifest.json`, `links/extracted-links.md`, raw JSON, full PR `changes.md` / `comments.md`, large wiki pages, or `commits/commits.md` into model context.
+For Qwen or another LLM with limited context, start with `output/analysis/05-analysis-input.md` and then read the other compact files only when needed. Recent work item comment excerpts are included in the compact work item data. Do not load `manifest.json`, `links/extracted-links.md`, raw JSON, full work item or PR comments, full PR changes, large wiki pages, or `commits/commits.md` into model context.
 
 Repeated collector runs overwrite only generated analysis files in `output/analysis/`. Existing `output/summary.md`, `output/summary-review.md`, and user notes under `output/` are preserved.
 
-The root work item and direct children are scope work items. Non-parent-child related work items are saved as context references only; the collector does not recursively traverse them and does not collect PRs, commits, or checks for them.
+The root work item and direct children are scope work items. Non-parent-child related work items are saved as context references only; the collector does not recursively traverse them and does not collect PRs, commits, checks, or comments for them.
 
 Direct children are grouped by the dynamic `Activity` field, with missing values grouped under `Unknown`. `--activity-filter` limits full child artifact collection to the selected Activity and records that filter in the manifest warnings.
 

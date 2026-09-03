@@ -6,6 +6,7 @@ import {
   Manifest,
   PullRequestArtifact,
   WikiArtifact,
+  WorkItemCommentsArtifact,
 } from './types';
 
 export function safeFileName(value: string): string {
@@ -75,6 +76,35 @@ export function renderWorkItemMarkdown(workItem: WorkItem): string {
         `- ${relation.rel ?? 'unknown'}: ${relation.url ?? 'unknown'}${relation.attributes?.name ? ` (${relation.attributes.name})` : ''}`,
       );
     }
+  }
+
+  return `${lines.join('\n')}\n`;
+}
+
+export function renderWorkItemCommentsMarkdown(
+  artifact: WorkItemCommentsArtifact,
+): string {
+  const lines = [
+    `# Work Item ${artifact.workItemId} Comments`,
+    '',
+    `- Count: ${artifact.count}`,
+    `- Total Count: ${artifact.totalCount}`,
+    '',
+  ];
+
+  if (artifact.comments.length === 0) {
+    lines.push('No comments found.');
+    return `${lines.join('\n')}\n`;
+  }
+
+  for (const comment of artifact.comments) {
+    lines.push(`## Comment ${comment.id ?? 'unknown'}`);
+    lines.push(`- Author: ${identityToString(comment.createdBy)}`);
+    lines.push(`- Created: ${dateToString(comment.createdDate)}`);
+    lines.push(`- Modified: ${dateToString(comment.modifiedDate)}`);
+    lines.push('');
+    lines.push(htmlToMarkdown(comment.text ?? ''));
+    lines.push('');
   }
 
   return `${lines.join('\n')}\n`;
@@ -249,7 +279,7 @@ export function renderReadme(manifest: Manifest): string {
     '## Files',
     '',
     '- `manifest.json` is the main index.',
-    '- `work-items/` contains normalized markdown and raw work item JSON.',
+    '- `work-items/` contains normalized work items, their comments, and raw JSON.',
     '- `links/` contains extracted links.',
     '- `pull-requests/`, `commits/`, and `wiki/` contain related artifacts when available.',
     '- `prompts/summarize-task.prompt.md` contains a prompt template for the next AI analysis step.',
@@ -285,7 +315,7 @@ export function renderSummaryPrompt(): string {
 
 Read \`manifest.json\` as the main index. Use only facts from this evidence pack. Do not invent missing details. Mark missing or ambiguous information as \`not found\` or \`uncertain\`.
 
-Distinguish scope work items (root + direct children) from context references. Do not infer PR/commit/check behavior from context references, because the collector intentionally does not collect those artifacts for them.
+Distinguish scope work items (root + direct children) from context references. Use work item comments as evidence for decisions, clarifications, constraints, and unresolved questions. Do not infer PR/commit/check behavior from context references, because the collector intentionally does not collect those artifacts for them.
 
 Use Activity grouping from the manifest. Analyze Activity = Development in extra detail when present. Keep other activities concise unless the evidence pack clearly indicates they are important.
 
@@ -306,6 +336,8 @@ Produce \`summary.md\` with this structure:
 ## Основные PR и commits
 
 ## Важные обсуждения из PR
+
+## Важные комментарии и решения в задачах
 
 ## Ссылки на Wiki / ТЗ / техническое решение
 
@@ -376,6 +408,13 @@ export function identityToString(value: unknown): string {
     stringValue(record.name, '') ||
     JSON.stringify(value)
   );
+}
+
+function dateToString(value: unknown): string {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  return stringValue(value, 'unknown');
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

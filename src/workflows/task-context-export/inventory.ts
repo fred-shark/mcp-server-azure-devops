@@ -11,6 +11,8 @@ interface InventoryWorkItem {
   activity?: string;
   file?: string;
   rawFile?: string;
+  commentsFile?: string;
+  commentCount?: number;
   fullCollection?: boolean;
   relationType?: string;
   sourceWorkItemId?: number;
@@ -179,6 +181,11 @@ function renderInventoryMarkdown(inventory: CompactInventory): string {
   lines.push(`- State: ${inventory.root.state}`);
   lines.push(`- File: \`${inventory.root.file ?? ''}\``);
   lines.push(`- Raw file: \`${inventory.root.rawFile ?? ''}\``, '');
+  lines.push(
+    `- Comments: ${inventory.root.commentCount ?? 0}`,
+    `- Comments file: \`${inventory.root.commentsFile ?? ''}\``,
+    '',
+  );
 
   lines.push('## Activity groups', '');
   for (const [activityName, items] of Object.entries(inventory.activities)) {
@@ -188,7 +195,7 @@ function renderInventoryMarkdown(inventory: CompactInventory): string {
     lines.push(`- Count: ${items.length}`, '');
     for (const item of items) {
       lines.push(
-        `- ${item.id ?? ''} | ${item.type} | ${item.state} | fullCollection=${Boolean(item.fullCollection)} | ${item.title} | \`${item.file ?? ''}\``,
+        `- ${item.id ?? ''} | ${item.type} | ${item.state} | fullCollection=${Boolean(item.fullCollection)} | comments=${item.commentCount ?? 0} | ${item.title} | \`${item.file ?? ''}\` | comments file: \`${item.commentsFile ?? ''}\``,
       );
     }
     lines.push('');
@@ -295,6 +302,8 @@ function toInventoryWorkItem(item: {
   activity?: string;
   file?: string;
   rawFile?: string;
+  commentsFile?: string;
+  commentCount?: number;
   fullCollection?: boolean;
   relationType?: string;
   sourceWorkItemId?: number;
@@ -307,6 +316,8 @@ function toInventoryWorkItem(item: {
     activity: short(item.activity),
     file: item.file,
     rawFile: item.rawFile,
+    commentsFile: item.commentsFile,
+    commentCount: item.commentCount,
     fullCollection: item.fullCollection,
     relationType: short(item.relationType),
     sourceWorkItemId: item.sourceWorkItemId,
@@ -320,6 +331,7 @@ function listLargeFilePatterns(manifest: Manifest): string[] {
     '**/raw/*.json',
     'pull-requests/**/changes.md',
     'pull-requests/**/comments.md',
+    'work-items/comments/*.comments.md',
     'commits/commits.md',
     'wiki/pages/*.md',
   ]);

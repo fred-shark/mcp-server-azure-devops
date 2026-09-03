@@ -5,6 +5,7 @@ import {
   collectTaskContext,
   defaultOutputDir,
   TaskContextCollectCliOptions,
+  TaskContextCollectOptions,
 } from '../../workflows/task-context-export';
 
 export function createTaskContextCollectCommand(
@@ -40,12 +41,7 @@ export function createTaskContextCollectCommand(
 
       const connection = await getConnection();
       const outputDir = options.out ?? defaultOutputDir(options.workItemId);
-      const hasArtifactIncludeFlags =
-        options.includeWiki ||
-        options.includePrs ||
-        options.includeCommits ||
-        options.includeComments ||
-        options.includeChecks;
+      const includes = resolveTaskContextArtifactIncludes(options);
 
       const manifest = await collectTaskContext({
         connection,
@@ -54,11 +50,7 @@ export function createTaskContextCollectCommand(
         outputDir,
         organizationId: undefined,
         activityFilter: options.activityFilter,
-        includeWiki: options.includeWiki ?? !hasArtifactIncludeFlags,
-        includePrs: options.includePrs ?? !hasArtifactIncludeFlags,
-        includeCommits: options.includeCommits ?? !hasArtifactIncludeFlags,
-        includeComments: options.includeComments ?? false,
-        includeChecks: options.includeChecks ?? false,
+        ...includes,
         includeRaw: options.includeRaw ?? true,
       });
 
@@ -78,6 +70,32 @@ export function createTaskContextCollectCommand(
     });
 
   return command;
+}
+
+export function resolveTaskContextArtifactIncludes(
+  options: TaskContextCollectCliOptions,
+): Pick<
+  TaskContextCollectOptions,
+  | 'includeWiki'
+  | 'includePrs'
+  | 'includeCommits'
+  | 'includeComments'
+  | 'includeChecks'
+> {
+  const hasArtifactIncludeFlags = Boolean(
+    options.includeWiki ||
+      options.includePrs ||
+      options.includeCommits ||
+      options.includeComments ||
+      options.includeChecks,
+  );
+  return {
+    includeWiki: options.includeWiki ?? !hasArtifactIncludeFlags,
+    includePrs: options.includePrs ?? !hasArtifactIncludeFlags,
+    includeCommits: options.includeCommits ?? !hasArtifactIncludeFlags,
+    includeComments: options.includeComments ?? !hasArtifactIncludeFlags,
+    includeChecks: options.includeChecks ?? false,
+  };
 }
 
 function parseNumber(value: string): number {

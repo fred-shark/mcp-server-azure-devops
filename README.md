@@ -152,7 +152,9 @@ azdevops-cli task-context-collect \
 
 When `--project` is omitted, the command uses the configured default project. When `--out` is omitted, it writes to `.ai-context/tasks/<workItemId>`.
 
-The evidence pack contains `manifest.json`, `README.md`, normalized work item markdown, raw JSON, extracted links, related PRs, commits, explicitly linked wiki pages, and `prompts/summarize-task.prompt.md`. Root and direct child work items are scope items. Other linked work items are saved only as context references and are not used for recursive PR/commit/check collection. Wiki pages are downloaded only from explicit links found in scope work items and collected PR/comment text; the collector does not run text search across wiki content.
+When no artifact include flags are supplied, the command collects work item comments by default together with wiki pages, pull requests, and commits. In a selective run, pass `--include-comments` explicitly. Comments are collected for the root work item and direct children included in full collection; context references and children excluded by `--activity-filter` remain text-only.
+
+The evidence pack contains `manifest.json`, `README.md`, normalized work item markdown, work item comment files under `work-items/comments/`, raw JSON, extracted links, related PRs, commits, explicitly linked wiki pages, and `prompts/summarize-task.prompt.md`. Root and direct child work items are scope items. Other linked work items are saved only as context references and are not used for recursive PR/commit/check/comment collection. Wiki pages are downloaded only from explicit links found in scope work items and collected PR/comment text; the collector does not run text search across wiki content.
 
 The collector also prepares compact deterministic files for LLM analysis:
 
@@ -163,7 +165,7 @@ The collector also prepares compact deterministic files for LLM analysis:
 - `output/analysis/04-commits-compact.md` and `.json`
 - `output/analysis/05-analysis-input.md`
 
-For Qwen or another model with limited context, pass `output/analysis/05-analysis-input.md` first. It points to compact follow-up files and explicitly tells the model not to read large raw evidence files into context. Avoid loading `manifest.json`, `links/extracted-links.md`, raw JSON, full PR `changes.md` / `comments.md`, large wiki pages, or `commits/commits.md` directly.
+For Qwen or another model with limited context, pass `output/analysis/05-analysis-input.md` first. It contains bounded excerpts from recent work item comments, points to compact follow-up files, and explicitly tells the model not to read large raw evidence files into context. Avoid loading `manifest.json`, `links/extracted-links.md`, raw JSON, full work item or PR comment files, full PR `changes.md`, large wiki pages, or `commits/commits.md` directly.
 
 Repeated runs overwrite deterministic generated files in `output/analysis/`, but preserve `output/summary.md`, `output/summary-review.md`, and user notes under `output/`.
 

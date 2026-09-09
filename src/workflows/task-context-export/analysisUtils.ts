@@ -51,6 +51,26 @@ export async function safeReadTextExcerpt(
   }
 }
 
+export async function safeReadTextTail(
+  filePath: string,
+  maxBytes: number,
+): Promise<string> {
+  try {
+    const fileSize = (await stat(filePath)).size;
+    const start = Math.max(0, fileSize - maxBytes);
+    const handle = await open(filePath, 'r');
+    try {
+      const buffer = Buffer.alloc(Math.min(maxBytes, fileSize));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+      return buffer.subarray(0, bytesRead).toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return '';
+  }
+}
+
 export async function getFileSize(filePath: string): Promise<number> {
   try {
     return (await stat(filePath)).size;

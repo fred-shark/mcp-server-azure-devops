@@ -1,6 +1,10 @@
 import path from 'path';
 import { WebApi } from 'azure-devops-node-api';
 import { PullRequestStatus } from 'azure-devops-node-api/interfaces/GitInterfaces';
+import {
+  Comment,
+  CommentSortOrder,
+} from 'azure-devops-node-api/interfaces/WorkItemTrackingInterfaces';
 import { WorkItem } from '../../features/work-items';
 import { getWorkItem } from '../../features/work-items/get-work-item/feature';
 import {
@@ -20,6 +24,7 @@ import {
   compactWorkItemType,
   fieldString,
   renderWorkItemMarkdown,
+  renderWorkItemCommentsMarkdown,
   safeBoundedFileName,
   safeFileName,
 } from './markdownRenderers';
@@ -49,6 +54,7 @@ import {
   TaskContextCollectOptions,
   WikiArtifact,
   WorkItemSummary,
+  WorkItemCommentsArtifact,
   WorkItemWithActivity,
 } from './types';
 
@@ -184,6 +190,10 @@ export async function collectTaskContext(
         warnings,
       )
     : [];
+  applyWorkItemCommentSummaries(
+    [rootSummary, ...Object.values(activitySummaries).flat()],
+    workItemComments,
+  );
   allLinks = [
     ...allLinks,
     ...workItemComments.flatMap((entry) =>
@@ -406,21 +416,75 @@ async function collectWorkItemComments(
   workItems: WorkItem[],
   includeRaw: boolean,
   warnings: CollectionIssue[],
-): Promise<Array<{ workItemId: number; comments: unknown }>> {
-  const witApi = await connection.getWorkItemTrackingApi();
-  const results: Array<{ workItemId: number; comments: unknown }> = [];
+): Promise<WorkItemCommentsArtifact[]> {
+  let witApi: Awaited<ReturnType<WebApi['getWorkItemTrackingApi']>>;
+  try {
+    witApi = await connection.getWorkItemTrackingApi();
+  } catch (error) {
+    warnings.push(
+      toIssue(
+        'Failed to initialize work item comments API',
+        'work-item-comments',
+        error,
+      ),
+    );
+    return [];
+  }
+  const results: WorkItemCommentsArtifact[] = [];
   for (const workItem of workItems) {
     if (workItem.id === undefined) {
       continue;
     }
     try {
-      const comments = await witApi.getComments(project, workItem.id, 200);
-      results.push({ workItemId: workItem.id, comments });
+      const comments: Comment[] = [];
+      let continuationToken: string | undefined;
+      let totalCount: number | undefined;
+      const seenContinuationTokens = new Set<string>();
+      do {
+        const page = await witApi.getComments(
+          project,
+          workItem.id,
+          200,
+          continuationToken,
+          false,
+          undefined,
+          CommentSortOrder.Asc,
+        );
+        comments.push(...(page.comments ?? []));
+        totalCount = page.totalCount ?? totalCount;
+        const nextToken = page.continuationToken || undefined;
+        if (nextToken && seenContinuationTokens.has(nextToken)) {
+          throw new Error(
+            `Repeated continuation token while fetching comments for work item ${workItem.id}`,
+          );
+        }
+        if (nextToken) {
+          seenContinuationTokens.add(nextToken);
+        }
+        continuationToken = nextToken;
+      } while (continuationToken);
+
+      const artifact: WorkItemCommentsArtifact = {
+        workItemId: workItem.id,
+        comments,
+        count: comments.length,
+        totalCount: totalCount ?? comments.length,
+      };
+      results.push(artifact);
+      await writeMarkdownFile(
+        outputDir,
+        workItemCommentsMarkdownFile(workItem.id),
+        renderWorkItemCommentsMarkdown(artifact),
+      );
       if (includeRaw) {
         await writeJsonFile(
           outputDir,
           `work-items/comments/raw/${workItem.id}.comments.json`,
-          comments,
+          {
+            count: artifact.count,
+            totalCount: artifact.totalCount,
+            comments: artifact.comments,
+          },
         );
       }
     } catch (error) {
@@ -434,6 +498,27 @@ async function collectWorkItemComments(
     }
   }
   return results;
+}
+
+function applyWorkItemCommentSummaries(
+  summaries: WorkItemSummary[],
+  comments: WorkItemCommentsArtifact[],
+): void {
+  const commentsByWorkItemId = new Map(
+    comments.map((entry) => [entry.workItemId, entry]),
+  );
+  for (const summary of summaries) {
+    const entry = commentsByWorkItemId.get(summary.id);
+    if (!entry) {
+      continue;
+    }
+    summary.commentsFile = workItemCommentsMarkdownFile(summary.id);
+    summary.commentCount = entry.count;
+  }
+}
+
+function workItemCommentsMarkdownFile(workItemId: number): string {
+  return `work-items/comments/${workItemId}.comments.md`;
 }
 
 async function collectPullRequests(

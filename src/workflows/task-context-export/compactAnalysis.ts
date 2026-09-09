@@ -8,6 +8,7 @@ import {
   extractSectionExcerpts,
   getFileSize,
   safeReadTextExcerpt,
+  safeReadTextTail,
   summarizeChangedFilesFromDiffOrMarkdown,
   truncateText,
 } from './analysisUtils';
@@ -36,6 +37,9 @@ interface CompactWorkItem {
   linkedPullRequestIds: number[];
   linkedCommitHashes: string[];
   linkedWikiLinks: string[];
+  commentCount: number;
+  commentExcerpts: string[];
+  commentsFile?: string;
   sourceFile?: string;
   fullCollection?: boolean;
 }
@@ -232,6 +236,9 @@ async function toCompactWorkItem(
     : '';
   const sections = extractWorkItemSections(text);
   const itemLinks = links.filter((link) => link.sourceWorkItemId === item.id);
+  const commentExcerpts = item.commentsFile
+    ? await summarizeWorkItemComments(path.join(outputDir, item.commentsFile))
+    : [];
   return {
     id: item.id,
     type: item.type,
@@ -260,9 +267,41 @@ async function toCompactWorkItem(
     linkedWikiLinks: uniqueStrings(
       itemLinks.filter((link) => link.kind === 'wiki').map((link) => link.url),
     ),
+    commentCount: item.commentCount ?? 0,
+    commentExcerpts,
+    commentsFile: item.commentsFile,
     sourceFile: item.file,
     fullCollection: item.fullCollection,
   };
+}
+
+async function summarizeWorkItemComments(filePath: string): Promise<string[]> {
+  const text = await safeReadTextTail(filePath, 512 * 1024);
+  const comments = text
+    .split(/(?=^## Comment )/gm)
+    .filter((section) => section.startsWith('## Comment '))
+    .map((section) => {
+      const author = extractBulletValue(section, 'Author') || 'Unknown';
+      const created = extractBulletValue(section, 'Created') || 'Unknown';
+      const content = section
+        .replace(/^## Comment .+$/im, '')
+        .replace(/^- (?:Author|Created|Modified):.*$/gim, '')
+        .trim();
+      return truncateText(`${created} — ${author}: ${content}`, 500);
+    })
+    .filter(Boolean)
+    .slice(-10);
+
+  const selected: string[] = [];
+  let totalLength = 0;
+  for (const comment of [...comments].reverse()) {
+    if (selected.length > 0 && totalLength + comment.length > 4000) {
+      break;
+    }
+    selected.unshift(comment);
+    totalLength += comment.length;
+  }
+  return selected;
 }
 
 async function buildWikiIndex(
@@ -590,9 +629,9 @@ function renderAnalysisInput(
   const lines = [
     '# Compact Analysis Input',
     '',
-    'Use only files in `output/analysis/` unless a compact file explicitly points to a small source excerpt. Do not read raw JSON, full PR diffs/comments, full wiki pages, `commits.md`, or `links/extracted-links.md` into model context.',
+    'Use only files in `output/analysis/` unless a compact file explicitly points to a small source excerpt. Do not read raw JSON, full work item or PR comments, full PR diffs, full wiki pages, `commits.md`, or `links/extracted-links.md` into model context.',
     'Do not invent missing facts. Mark missing or uncertain data as `not found` or `uncertain`.',
-    'Context references are text-only. PR/commits/checks are collected only for root and direct child work items.',
+    'Context references are text-only. Comments, PRs, commits, and checks are collected only for root and direct child work items included in full collection.',
     '',
     '## Root Summary',
     '',
@@ -602,10 +641,12 @@ function renderAnalysisInput(
     `- State: ${workItems.root.state}`,
     `- Description: ${workItems.root.descriptionExcerpt || 'Not found'}`,
     `- Acceptance Criteria: ${workItems.root.acceptanceCriteriaExcerpt || 'Not found'}`,
-    '',
-    '## Activity Overview',
+    `- Comments: ${workItems.root.commentCount}`,
+    `- Comments file: ${workItems.root.commentsFile ? `\`${workItems.root.commentsFile}\`` : 'Not collected'}`,
     '',
   ];
+  pushAnalysisCommentExcerpts(lines, workItems.root);
+  lines.push('## Activity Overview', '');
   for (const [activity, items] of Object.entries(workItems.activities)) {
     lines.push(`- ${activity}: ${items.length}`);
   }
@@ -624,6 +665,8 @@ function renderAnalysisInput(
       lines.push(
         `- PRs: ${item.linkedPullRequestIds.join(', ') || 'Not found'}`,
       );
+      lines.push(`- Comments: ${item.commentCount}`);
+      pushAnalysisCommentExcerpts(lines, item);
       lines.push('');
     }
   }
@@ -731,6 +774,10 @@ function pushWorkItem(
   lines.push(`- PRs: ${item.linkedPullRequestIds.join(', ') || 'Not found'}`);
   lines.push(`- Commits: ${item.linkedCommitHashes.join(', ') || 'Not found'}`);
   lines.push(`- Wiki links: ${item.linkedWikiLinks.length}`);
+  lines.push(`- Comments: ${item.commentCount}`);
+  lines.push(
+    `- Comments file: ${item.commentsFile ? `\`${item.commentsFile}\`` : 'Not collected'}`,
+  );
   lines.push(
     '',
     '#### Description Excerpt',
@@ -743,6 +790,24 @@ function pushWorkItem(
     '',
     item.acceptanceCriteriaExcerpt || 'Not found',
   );
+  if (item.commentExcerpts.length > 0) {
+    lines.push('', '#### Recent Comment Excerpts', '');
+    for (const comment of item.commentExcerpts) {
+      lines.push(`- ${comment}`);
+    }
+  }
+}
+
+function pushAnalysisCommentExcerpts(
+  lines: string[],
+  item: CompactWorkItem,
+): void {
+  if (item.commentExcerpts.length === 0) {
+    return;
+  }
+  for (const comment of item.commentExcerpts) {
+    lines.push(`- Recent comment: ${comment}`);
+  }
 }
 
 function countMatches(text: string, pattern: RegExp): Record<string, number> {

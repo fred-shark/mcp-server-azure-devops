@@ -33,6 +33,7 @@ import { buildCompactInventory, writeCompactInventory } from './inventory';
 import { extractLinksFromText } from './linkExtractors';
 import { buildManifest, createWorkItemSummary } from './manifest';
 import {
+  renderWorkItemCommentsMarkdown,
   renderWorkItemMarkdown,
   safeBoundedFileName,
   safeFileName,
@@ -408,6 +409,197 @@ describe('task context export workflow units', () => {
     expect(markdown).toContain('Done');
   });
 
+  test('renders normalized work item comments markdown', () => {
+    const markdown = renderWorkItemCommentsMarkdown({
+      workItemId: 123,
+      count: 1,
+      totalCount: 1,
+      comments: [
+        {
+          id: 7,
+          createdBy: { displayName: 'Product Owner' },
+          createdDate: new Date('2026-08-25T10:00:00.000Z'),
+          modifiedDate: new Date('2026-08-25T11:00:00.000Z'),
+          text: '<p>Use the new contract &amp; keep compatibility.</p>',
+        },
+      ],
+    });
+
+    expect(markdown).toContain('# Work Item 123 Comments');
+    expect(markdown).toContain('- Author: Product Owner');
+    expect(markdown).toContain('- Created: 2026-08-25T10:00:00.000Z');
+    expect(markdown).toContain('Use the new contract & keep compatibility.');
+  });
+
+  test('collects paginated comments only for full-collection work items', async () => {
+    const outputDir = await mkdtemp(path.join(os.tmpdir(), 'task-context-'));
+    try {
+      const root = createWorkItem(123, {
+        relations: [
+          relation('System.LinkTypes.Hierarchy-Forward', 124),
+          relation('System.LinkTypes.Hierarchy-Forward', 125),
+          relation('System.LinkTypes.Related', 500),
+        ],
+      });
+      const items = new Map([
+        [123, root],
+        [
+          124,
+          createWorkItem(124, {
+            fields: { 'Microsoft.VSTS.Common.Activity': 'Testing' },
+          }),
+        ],
+        [
+          125,
+          createWorkItem(125, {
+            fields: { 'Microsoft.VSTS.Common.Activity': 'Development' },
+          }),
+        ],
+        [500, createWorkItem(500)],
+      ]);
+      mockedGetWorkItem.mockImplementation(async (_connection, id) => {
+        const item = items.get(id);
+        if (!item) throw new Error(`Unexpected work item ${id}`);
+        return item;
+      });
+
+      const getComments = jest.fn(
+        async (
+          _project: string,
+          workItemId: number,
+          _top?: number,
+          continuationToken?: string,
+          _includeDeleted?: boolean,
+          _expand?: unknown,
+          _order?: number,
+        ) => {
+          if (workItemId === 123 && !continuationToken) {
+            return {
+              comments: [
+                {
+                  id: 1,
+                  createdBy: { displayName: 'Owner' },
+                  createdDate: new Date('2026-08-24T10:00:00.000Z'),
+                  text: 'Initial context',
+                },
+              ],
+              continuationToken: 'next-page',
+              totalCount: 2,
+            };
+          }
+          if (workItemId === 123 && continuationToken === 'next-page') {
+            return {
+              comments: [
+                {
+                  id: 2,
+                  createdBy: { displayName: 'Owner' },
+                  createdDate: new Date('2026-08-25T10:00:00.000Z'),
+                  text: 'Final decision from comments',
+                },
+              ],
+              totalCount: 2,
+            };
+          }
+          if (workItemId === 125) {
+            return { comments: [], totalCount: 0 };
+          }
+          throw new Error(`Comments should not be requested for ${workItemId}`);
+        },
+      );
+      const connection = {
+        serverUrl: 'https://dev.azure.com/org',
+        getGitApi: jest.fn().mockResolvedValue({}),
+        getWorkItemTrackingApi: jest.fn().mockResolvedValue({ getComments }),
+      } as unknown as TaskContextCollectOptions['connection'];
+
+      const manifest = await collectTaskContext({
+        ...taskContextOptions(),
+        connection,
+        outputDir,
+        activityFilter: 'Development',
+        includeWiki: false,
+        includeComments: true,
+        includeRaw: true,
+      });
+
+      expect(getComments.mock.calls.map((call) => call[1])).toEqual([
+        123, 123, 125,
+      ]);
+      expect(getComments.mock.calls[1][3]).toBe('next-page');
+      expect(getComments.mock.calls[0][4]).toBe(false);
+      expect(getComments.mock.calls[0][6]).toBe(1);
+      expect(manifest.workItems.root.commentCount).toBe(2);
+      expect(manifest.workItems.root.commentsFile).toBe(
+        'work-items/comments/123.comments.md',
+      );
+      expect(
+        manifest.workItems.activities.Testing[0].commentsFile,
+      ).toBeUndefined();
+      expect(manifest.workItems.activities.Development[0].commentCount).toBe(0);
+      await expect(
+        readFile(
+          path.join(outputDir, 'work-items/comments/123.comments.md'),
+          'utf8',
+        ),
+      ).resolves.toContain('Final decision from comments');
+      await expect(
+        readFile(
+          path.join(outputDir, 'work-items/comments/125.comments.md'),
+          'utf8',
+        ),
+      ).resolves.toContain('No comments found.');
+      const raw = JSON.parse(
+        await readFile(
+          path.join(outputDir, 'work-items/comments/raw/123.comments.json'),
+          'utf8',
+        ),
+      ) as { count: number; totalCount: number; comments: unknown[] };
+      expect(raw).toMatchObject({ count: 2, totalCount: 2 });
+      expect(raw.comments).toHaveLength(2);
+      await expect(
+        readFile(
+          path.join(outputDir, 'output/analysis/05-analysis-input.md'),
+          'utf8',
+        ),
+      ).resolves.toContain('Final decision from comments');
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  test('records a warning when work item comments are unavailable', async () => {
+    const outputDir = await mkdtemp(path.join(os.tmpdir(), 'task-context-'));
+    try {
+      mockedGetWorkItem.mockResolvedValue(createWorkItem(123));
+      const connection = {
+        serverUrl: 'https://server/tfs/collection',
+        getGitApi: jest.fn().mockResolvedValue({}),
+        getWorkItemTrackingApi: jest.fn().mockResolvedValue({
+          getComments: jest.fn().mockRejectedValue(new Error('Unsupported')),
+        }),
+      } as unknown as TaskContextCollectOptions['connection'];
+
+      const manifest = await collectTaskContext({
+        ...taskContextOptions(),
+        connection,
+        outputDir,
+        includeWiki: false,
+        includeComments: true,
+      });
+
+      expect(manifest.workItems.root.commentsFile).toBeUndefined();
+      expect(manifest.warnings).toEqual([
+        expect.objectContaining({
+          source: 'work-item-comments',
+          message: 'Failed to fetch comments for work item 123',
+          error: 'Unsupported',
+        }),
+      ]);
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
   test('builds manifest with deduplicated artifact source ids', () => {
     const root = createWorkItem(123, {
       fields: { 'System.Title': 'Root title', 'System.WorkItemType': 'Bug' },
@@ -652,6 +844,9 @@ describe('task context export workflow units', () => {
       await mkdir(path.join(outputDir, 'work-items/context-references'), {
         recursive: true,
       });
+      await mkdir(path.join(outputDir, 'work-items/comments'), {
+        recursive: true,
+      });
       await mkdir(path.join(outputDir, 'wiki/pages'), { recursive: true });
       await mkdir(path.join(outputDir, 'pull-requests/Repo/pr-1'), {
         recursive: true,
@@ -668,6 +863,14 @@ describe('task context export workflow units', () => {
       await writeFile(
         path.join(outputDir, 'work-items/context-references/500.Bug.md'),
         '# Bug 500: Related\n\n## Description\n\nReference description\n',
+      );
+      await writeFile(
+        path.join(outputDir, 'work-items/comments/123.comments.md'),
+        '# Work Item 123 Comments\n\n- Count: 1\n- Total Count: 1\n\n## Comment 1\n- Author: Owner\n- Created: 2026-08-25T10:00:00.000Z\n- Modified: 2026-08-25T10:00:00.000Z\n\nImportant root decision\n',
+      );
+      await writeFile(
+        path.join(outputDir, 'work-items/comments/124.comments.md'),
+        '# Work Item 124 Comments\n\n- Count: 1\n- Total Count: 1\n\n## Comment 2\n- Author: Developer\n- Created: 2026-08-25T11:00:00.000Z\n- Modified: 2026-08-25T11:00:00.000Z\n\nImplementation clarification\n',
       );
       await writeFile(
         path.join(outputDir, 'wiki/pages/wiki-page.md'),
@@ -701,7 +904,10 @@ describe('task context export workflow units', () => {
           path.join(outputDir, 'output/analysis/01-work-items-compact.json'),
           'utf8',
         ),
-      ) as { contextReferences: Array<{ fullCollection?: boolean }> };
+      ) as {
+        root: { commentCount: number; commentExcerpts: string[] };
+        contextReferences: Array<{ fullCollection?: boolean }>;
+      };
       const prIndex = JSON.parse(
         await readFile(
           path.join(outputDir, 'output/analysis/03-pr-index.json'),
@@ -710,6 +916,12 @@ describe('task context export workflow units', () => {
       ) as Array<{ changesSummary: { categories: Record<string, number> } }>;
 
       expect(analysisInput).toContain('Use only files in `output/analysis/`');
+      expect(analysisInput).toContain('Important root decision');
+      expect(analysisInput).toContain('Implementation clarification');
+      expect(workItems.root.commentCount).toBe(1);
+      expect(workItems.root.commentExcerpts[0]).toContain(
+        'Important root decision',
+      );
       expect(workItems.contextReferences[0].fullCollection).toBe(false);
       expect(prIndex[0].changesSummary.categories.backend).toBe(1);
       expect(prIndex[0].changesSummary.categories.tests).toBe(1);
@@ -768,6 +980,8 @@ function buildSampleManifest(outputDir: string) {
     undefined,
     { fullCollection: true, activity: 'Unknown' },
   );
+  rootSummary.commentsFile = 'work-items/comments/123.comments.md';
+  rootSummary.commentCount = 1;
 
   return buildManifest({
     generatedAt: '2026-04-30T00:00:00.000Z',
@@ -784,6 +998,8 @@ function buildSampleManifest(outputDir: string) {
           state: 'Closed',
           activity: 'Development',
           file: 'work-items/activities/Development/124.Task.md',
+          commentsFile: 'work-items/comments/124.comments.md',
+          commentCount: 1,
           fullCollection: true,
         },
       ],

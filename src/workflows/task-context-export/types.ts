@@ -1,5 +1,6 @@
 import { WebApi } from 'azure-devops-node-api';
 import { WorkItem } from '../../features/work-items';
+import type { Comment } from 'azure-devops-node-api/interfaces/WorkItemTrackingInterfaces';
 
 export interface TaskContextCollectOptions {
   connection: WebApi;
@@ -46,7 +47,16 @@ export interface WorkItemSummary {
   sourceWorkItemId?: number;
   file: string;
   rawFile?: string;
+  commentsFile?: string;
+  commentCount?: number;
   fullCollection?: boolean;
+}
+
+export interface WorkItemCommentsArtifact {
+  workItemId: number;
+  comments: Comment[];
+  count: number;
+  totalCount: number;
 }
 
 export interface ManifestPullRequest {

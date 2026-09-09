@@ -67,8 +67,6 @@ async function main() {
     // Connect to stdio transport
     const transport = new StdioServerTransport();
     await server.connect(transport);
-
-    process.stderr.write('Azure DevOps MCP Server running on stdio\n');
   } catch (error) {
     process.stderr.write(`Error starting server: ${error}\n`);
     process.exit(1);
